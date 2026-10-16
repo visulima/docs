@@ -1,0 +1,85 @@
+name: "Docs"
+
+on: # yamllint disable-line rule:truthy
+    push:
+        branches:
+            - "main"
+    pull_request:
+        branches:
+            - "main"
+    # Sent by the source repositories (visulima, vis, packem) through
+    # .github/workflows/docs-dispatch.yml in each of them.
+    repository_dispatch:
+        types:
+            - "source-updated"
+            - "source-preview"
+    workflow_dispatch: # yamllint disable-line rule:empty-values
+
+concurrency:
+    group: "docs-${{ github.event.client_payload.pr || github.event.pull_request.number || github.ref }}"
+    cancel-in-progress: true
+
+permissions:
+    contents: "read"
+
+jobs:
+    deploy:
+        name: "Build and deploy"
+        runs-on: "ubuntu-24.04"
+        timeout-minutes: 30
+        steps:
+            - name: "Harden Runner"
+              uses: "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" # v2.20.0
+              with:
+                  egress-policy: "audit"
+
+            - name: "Git checkout"
+              uses: "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0" # v7.0.0
+              with:
+                  persist-credentials: false
+
+            - name: "Setup resources and environment"
+              uses: "anolilab/workflows/step/node@aa162a984a4909f412bc4dbae712def066a0a681" # v20.2.5 # main
+              with:
+                  node-version: "24"
+                  install-node-gyp: "true"
+                  cache-prefix: "docs"
+                  skip-playwright: "true"
+                  upgrade-npm-version: false
+                  run-signatures-audit: false
+                  run-npm-audit: false
+
+            # A preview of a source pull request builds the docs against that exact commit.
+            - name: "Pin the source commit being previewed"
+              if: "github.event_name == 'repository_dispatch' && github.event.action == 'source-preview'"
+              env:
+                  SOURCE_REPO: "${{ github.event.client_payload.repo }}"
+                  SOURCE_SHA: "${{ github.event.client_payload.sha }}"
+              run: 'echo "DOCS_REFS=${SOURCE_REPO}=${SOURCE_SHA}" >> "$GITHUB_ENV"'
+
+            - name: "Fetch the source repositories"
+              run: "pnpm run sources"
+
+            - name: "Build"
+              run: "pnpm run build"
+
+            - name: "Deploy to production"
+              if: "github.event_name == 'push' || (github.event_name == 'repository_dispatch' && github.event.action == 'source-updated') || github.event_name == 'workflow_dispatch'"
+              env:
+                  NETLIFY_AUTH_TOKEN: "${{ secrets.NETLIFY_AUTH_TOKEN }}"
+                  NETLIFY_SITE_ID: "${{ secrets.NETLIFY_SITE_ID }}"
+              run: "npx --yes netlify-cli@27.12.1 deploy --prod --dir dist/client --message \"${GITHUB_SHA}\""
+
+            # Non-production deploys get a stable alias per pull request, so the preview URL
+            # stays the same across pushes.
+            - name: "Deploy preview"
+              if: "github.event_name == 'pull_request' || (github.event_name == 'repository_dispatch' && github.event.action == 'source-preview')"
+              env:
+                  NETLIFY_AUTH_TOKEN: "${{ secrets.NETLIFY_AUTH_TOKEN }}"
+                  NETLIFY_SITE_ID: "${{ secrets.NETLIFY_SITE_ID }}"
+                  PR_NUMBER: "${{ github.event.pull_request.number || github.event.client_payload.pr }}"
+              run: |
+                  set -euo pipefail
+                  npx --yes netlify-cli@27.12.1 deploy --dir dist/client --alias "pr-${PR_NUMBER}" --message "${GITHUB_SHA}" --json > deploy.json
+                  url=$(node -p "JSON.parse(require('fs').readFileSync('deploy.json', 'utf8')).deploy_url")
+                  echo "Preview: ${url}" >> "$GITHUB_STEP_SUMMARY"
