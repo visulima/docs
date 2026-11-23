@@ -1,6 +1,9 @@
 # Deploys are done by .github/workflows/docs.yml with the Netlify CLI, so this file only
-# carries routing and headers. The build settings below are for reference.
+# carries routing and headers.
 [build]
+  # Netlify's own git build cannot run here: it has no source checkouts (.sources/), and
+  # the workflow already builds and deploys every commit. An exit code of 0 cancels the build.
+  ignore = "exit 0"
   command = "pnpm run build"
   publish = "dist/client"
 
