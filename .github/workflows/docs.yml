@@ -68,7 +68,9 @@ jobs:
               env:
                   NETLIFY_AUTH_TOKEN: "${{ secrets.NETLIFY_AUTH_TOKEN }}"
                   NETLIFY_SITE_ID: "${{ secrets.NETLIFY_SITE_ID }}"
-              run: "npx --yes netlify-cli@27.12.1 deploy --prod --dir dist/client --message \"${GITHUB_SHA}\""
+              # --no-build: the "Build" step already built dist/client. Without it the CLI runs the
+              # build again, which re-fetches the source docs and can fail on a transient fetch error.
+              run: "npx --yes netlify-cli@27.12.1 deploy --no-build --prod --dir dist/client --message \"${GITHUB_SHA}\""
 
             # Non-production deploys get a stable alias per pull request, so the preview URL
             # stays the same across pushes.
@@ -80,6 +82,7 @@ jobs:
                   PR_NUMBER: "${{ github.event.pull_request.number || github.event.client_payload.pr }}"
               run: |
                   set -euo pipefail
-                  npx --yes netlify-cli@27.12.1 deploy --dir dist/client --alias "pr-${PR_NUMBER}" --message "${GITHUB_SHA}" --json > deploy.json
+                  # --no-build: reuse the dist/client from the "Build" step instead of building twice.
+                  npx --yes netlify-cli@27.12.1 deploy --no-build --dir dist/client --alias "pr-${PR_NUMBER}" --message "${GITHUB_SHA}" --json > deploy.json
                   url=$(node -p "JSON.parse(require('fs').readFileSync('deploy.json', 'utf8')).deploy_url")
                   echo "Preview: ${url}" >> "$GITHUB_STEP_SUMMARY"
